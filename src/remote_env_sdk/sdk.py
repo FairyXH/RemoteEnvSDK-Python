@@ -62,11 +62,17 @@ class _Client:
             raise RemoteEnvConnectionError("client is not connected")
         self.transport.send(payload)
 
-    def wait_for(self, key: str, timeout: float | None) -> dict[str, Any]:
+    def prepare_waiter(self, key: str) -> threading.Event:
         event = threading.Event()
-        with self.lock: self.pending.setdefault(key, []).append((event, {}))
+        with self.lock:
+            self.pending.setdefault(key, []).append((event, {}))
+        return event
+
+    def wait_for(self, key: str, timeout: float | None, event: threading.Event | None = None) -> dict[str, Any]:
+        event = event or self.prepare_waiter(key)
         if not event.wait(timeout):
-            with self.lock: self.pending[key] = [(e, p) for e, p in self.pending.get(key, []) if e is not event]
+            with self.lock:
+                self.pending[key] = [(e, p) for e, p in self.pending.get(key, []) if e is not event]
             raise RemoteEnvTimeoutError(f"timeout waiting for {key}")
         with self.lock:
             items = self.pending.get(key, [])
@@ -150,8 +156,9 @@ class RemoteEnvSDK:
             if not isinstance(package, Package): raise RemoteEnvUploadError("upload arguments must be Package instances")
             data_type = package.data_type; sequence = self._sequence.next(self._collector_device_id, data_type)
             payload = {"type": "environment_data", "version": 1, "device_id": self._collector_device_id, "data_type": data_type, "timestamp": now_ms(), "sequence": sequence, "data": package.to_dict()}
+            waiter = self._collector.prepare_waiter(f"ack:{data_type}:{sequence}")
             self._collector.send(payload)
-            results.append(self._collector.wait_for(f"ack:{data_type}:{sequence}", timeout))
+            results.append(self._collector.wait_for(f"ack:{data_type}:{sequence}", timeout, waiter))
         return results
 
     def set_client_token(self, token: str) -> "RemoteEnvSDK":
@@ -173,14 +180,16 @@ class RemoteEnvSDK:
         if not self._consumer: raise RemoteEnvConnectionError("consumer is not connected")
         types = [canonical_data_type(data_type)] if isinstance(data_type, str) else [canonical_data_type(v) for v in (data_type or [])]
         self._consumer.subscriptions.setdefault(device_id, set()).update(types)
+        waiter = self._consumer.prepare_waiter(f"sub:{device_id}")
         self._consumer.send({"type": "subscribe", "device_id": device_id, "data_types": types})
-        return self._consumer.wait_for(f"sub:{device_id}", self.connect_timeout)
+        return self._consumer.wait_for(f"sub:{device_id}", self.connect_timeout, waiter)
 
     def unsubscribe(self, device_id: str, data_type: str | list[str] | None = None) -> dict[str, Any]:
         if not self._consumer: raise RemoteEnvConnectionError("consumer is not connected")
         types = [canonical_data_type(data_type)] if isinstance(data_type, str) else [canonical_data_type(v) for v in (data_type or [])]
+        waiter = self._consumer.prepare_waiter(f"sub:{device_id}")
         self._consumer.send({"type": "unsubscribe", "device_id": device_id, "data_types": types})
-        return self._consumer.wait_for(f"sub:{device_id}", self.connect_timeout)
+        return self._consumer.wait_for(f"sub:{device_id}", self.connect_timeout, waiter)
 
     def get_data(self, device_id: str, data_type: str, timeout: float | None = 10, fresh: bool = False) -> Package:
         if not self._consumer: raise RemoteEnvConnectionError("consumer is not connected")
