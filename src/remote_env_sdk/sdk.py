@@ -42,9 +42,17 @@ class _Client:
         self.auth_error: dict[str, Any] | None = None
         self._manual_close = False
         self._reconnect_stop = threading.Event()
+        self._token: str | None = None
+        self._device_id: str | None = None
+        self._device: dict[str, Any] | None = None
 
     def connect(self, token: str, device_id: str | None, device: dict[str, Any] | None) -> None:
         self._manual_close = False
+        self._reconnect_stop.clear()
+        self._token, self._device_id, self._device = token, device_id, device
+        self.auth_error = None
+        self.ready.clear()
+        self.disconnected.clear()
         self.transport = self.sdk._transport_factory(self.sdk.server_url)
         self.transport.connect(self._on_message, self._on_disconnect)
         auth: dict[str, Any] = {"type": "auth", "role": self.role, "token": token}
@@ -58,6 +66,10 @@ class _Client:
             raise RemoteEnvConnectionError("authentication timed out")
         if self.auth_error:
             self.sdk._raise_error(self.auth_error)
+        with self.lock:
+            subscriptions = {device: set(types) for device, types in self.subscriptions.items()}
+        for target, types in subscriptions.items():
+            self.send({"type": "subscribe", "device_id": target, "data_types": sorted(types)})
         self._heartbeat_stop.clear()
         self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self._heartbeat_thread.start()
@@ -68,6 +80,10 @@ class _Client:
         self._heartbeat_stop.set()
         if self.transport: self.transport.close()
         self.ready.clear()
+        if self._manual_close or not self._token:
+            return
+        if self.disconnected.is_set():
+            threading.Thread(target=self._reconnect_loop, name="remote-env-reconnect", daemon=True).start()
 
     def send(self, payload: dict[str, Any]) -> None:
         if not self.transport or not self.transport.connected:
@@ -136,8 +152,22 @@ class _Client:
             except Exception: pass
         self._resolve(f"data:{device_id}:{data_type}", message)
 
-    def _on_disconnect(self, _error: BaseException | None) -> None:
+    def _on_disconnect(self, error: BaseException | None) -> None:
         self.disconnected.set(); self.ready.clear()
+        if not self._manual_close and self._token:
+            threading.Thread(target=self._reconnect_loop, name="remote-env-reconnect", daemon=True).start()
+
+    def _reconnect_loop(self) -> None:
+        delay = 0.5
+        while not self._manual_close and not self._reconnect_stop.is_set():
+            if self._reconnect_stop.wait(delay):
+                return
+            try:
+                self.connect(self._token or "", self._device_id, self._device)
+                return
+            except Exception:
+                delay = min(delay * 2, 30.0)
+
 
     def _heartbeat_loop(self) -> None:
         while not self._heartbeat_stop.wait(self.sdk.heartbeat_interval):
