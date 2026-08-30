@@ -1,0 +1,16 @@
+from remote_env_sdk import Bluetooth_Package, Cell_Package, Environment_Package, GPS_Package, GNSS_Package, Other_Package, Sensor_Package, WiFi_Package
+
+wifi = WiFi_Package()
+wifi.addwifi(ssid="AP-1", bssid="00:11:22:33:44:55")
+wifi.addwifi(ssid="AP-2", bssid="AA:BB:CC:DD:EE:FF", custom={"scanner": "offline-example", "nested": {"value": 1}})
+bluetooth = Bluetooth_Package(technology="ble")
+bluetooth.addbluetooth(name="Beacon", address="11:22:33:44:55:66")
+cell = Cell_Package(network_type="LTE")
+cell.addcell(radio="LTE", mcc="460", mnc="01", cid=1001)
+GPS_Package().addgps(latitude=25.0330, longitude=121.5654)
+GNSS_Package().addgnss(svid=12, satellite_type="gps")
+Sensor_Package(sensor_type="temperature").addsensor(timestamp=1, value=23.5)
+Environment_Package().add_reading("temperature", value=23.5, unit="degC")
+Other_Package().add_field("vendor_payload", {"ok": True})
+print("wifi count:", len(wifi))
+print("wifi payload:", wifi.to_dict())

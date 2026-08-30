@@ -1,5 +1,7 @@
 # RemoteEnvSDK
 
+完整中文开发者手册：[`docs/README_CN.md`](docs/README_CN.md)。
+
 Typed Python client for RemoteEnvServer. Application code uses Python packages; JSON Envelope and WebSocket details remain internal.
 
 ## Collector
