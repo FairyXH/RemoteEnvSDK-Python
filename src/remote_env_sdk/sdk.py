@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any, Callable
 
 from .constants import SequenceStore, now_ms, validate_identifier
@@ -38,8 +39,12 @@ class _Client:
         self.subscriptions: dict[str, set[str]] = {}
         self._heartbeat_stop = threading.Event()
         self._heartbeat_thread: threading.Thread | None = None
+        self.auth_error: dict[str, Any] | None = None
+        self._manual_close = False
+        self._reconnect_stop = threading.Event()
 
     def connect(self, token: str, device_id: str | None, device: dict[str, Any] | None) -> None:
+        self._manual_close = False
         self.transport = self.sdk._transport_factory(self.sdk.server_url)
         self.transport.connect(self._on_message, self._on_disconnect)
         auth: dict[str, Any] = {"type": "auth", "role": self.role, "token": token}
@@ -47,12 +52,19 @@ class _Client:
         if device: auth["device"] = device
         self.transport.send(auth)
         if not self.ready.wait(self.sdk.connect_timeout):
-            self.transport.close(); raise RemoteEnvConnectionError("authentication timed out")
+            self.transport.close()
+            if self.auth_error:
+                self.sdk._raise_error(self.auth_error)
+            raise RemoteEnvConnectionError("authentication timed out")
+        if self.auth_error:
+            self.sdk._raise_error(self.auth_error)
         self._heartbeat_stop.clear()
         self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self._heartbeat_thread.start()
 
     def close(self) -> None:
+        self._manual_close = True
+        self._reconnect_stop.set()
         self._heartbeat_stop.set()
         if self.transport: self.transport.close()
         self.ready.clear()
@@ -78,7 +90,10 @@ class _Client:
             items = self.pending.get(key, [])
             payload = next((p for e, p in items if e is event), None)
             self.pending[key] = [(e, p) for e, p in items if e is not event]
-        return payload or {}
+        payload = payload or {}
+        if payload.get("type") == "error":
+            self.sdk._raise_error(payload)
+        return payload
 
     def _resolve(self, key: str, payload: dict[str, Any]) -> None:
         with self.lock:
@@ -93,8 +108,13 @@ class _Client:
             return
         if message_type == "error":
             self.sdk._last_error(message)
-            code = str(message.get("code", "server_error"))
+            self.auth_error = message
             self._resolve("error", message)
+            with self.lock:
+                for key in list(self.pending):
+                    if key != "error":
+                        self._resolve(key, message)
+            self.ready.set()
             return
         if message_type == "data_result":
             self._resolve(f"ack:{message.get('data_type')}:{message.get('sequence')}", message); return
@@ -208,5 +228,10 @@ class RemoteEnvSDK:
     def on_data(self, callback: Callable[[Package], None]) -> "RemoteEnvSDK":
         if self._consumer is None: self._consumer = _Client(self, "consumer")
         self._consumer.callbacks.append(callback); return self
+
+    def _raise_error(self, message: dict[str, Any]) -> None:
+        code = str(message.get("code", "server_error"))
+        error_type = ERROR_MAP.get(code, RemoteEnvProtocolError if code == "invalid_message" else RemoteEnvServerError)
+        raise error_type(f"{code}: {message.get('message', 'server error')}")
 
     def _last_error(self, message: dict[str, Any]) -> None: self._last_error_message = message
