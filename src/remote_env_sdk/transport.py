@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 import threading
 from typing import Any, Callable
 
@@ -8,9 +9,10 @@ from .exceptions import RemoteEnvConnectionError
 
 
 class WebSocketTransport:
-    def __init__(self, url: str, *, websocket_factory: Callable[..., Any] | None = None, timeout: float = 10.0):
+    def __init__(self, url: str, *, websocket_factory: Callable[..., Any] | None = None, timeout: float = 10.0, ssl_verify: bool = True):
         self.url = url
         self.timeout = timeout
+        self.ssl_verify = ssl_verify
         self._factory = websocket_factory
         self._ws: Any = None
         self._receiver: threading.Thread | None = None
@@ -24,7 +26,10 @@ class WebSocketTransport:
             if self._factory is None:
                 from websocket import create_connection
                 self._factory = create_connection
-            self._ws = self._factory(self.url, timeout=self.timeout)
+            options = {"cert_reqs": ssl.CERT_REQUIRED if self.ssl_verify else ssl.CERT_NONE}
+            if not self.ssl_verify:
+                options["check_hostname"] = False
+            self._ws = self._factory(self.url, timeout=self.timeout, sslopt=options)
         except Exception as exc:
             raise RemoteEnvConnectionError(f"websocket connection failed: {exc}") from exc
         self._on_message, self._on_disconnect = on_message, on_disconnect

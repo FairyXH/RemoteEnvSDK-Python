@@ -1,10 +1,12 @@
 ﻿import json
+import ssl
 from pathlib import Path
 
 import pytest
 
 from remote_env_sdk import RemoteEnvSDK, WiFi_Package
 from remote_env_sdk.exceptions import RemoteEnvTimeoutError
+from remote_env_sdk.transport import WebSocketTransport
 
 
 class FakeTransport:
@@ -73,3 +75,39 @@ def test_consumer_cache_callback_and_fresh(tmp_path):
     data = sdk.get_data("device-1", "wifi", timeout=0)
     assert data.items[0]["ssid"] == "cached"
     assert len(received) == 1
+
+
+def test_ssl_verify_configures_websocket_ssl_options():
+    calls = []
+
+    class FakeWebSocket:
+        def send(self, _raw):
+            pass
+
+        def recv(self):
+            return None
+
+        def close(self):
+            pass
+
+    def factory(url, **kwargs):
+        calls.append((url, kwargs))
+        return FakeWebSocket()
+
+    transport = WebSocketTransport(
+        "wss://example.invalid/ws",
+        websocket_factory=factory,
+        ssl_verify=False,
+    )
+    transport.connect(lambda _message: None, lambda _error: None)
+    transport.close()
+
+    assert calls[0][1]["sslopt"]["cert_reqs"] == ssl.CERT_NONE
+
+
+def test_sdk_ssl_verify_is_chainable_and_validates_bool(tmp_path):
+    sdk = RemoteEnvSDK("wss://example.invalid/ws", sequence_path=tmp_path / "seq.json")
+    assert sdk.ssl_verify(False) is sdk
+    assert sdk.ssl_verify_enabled is False
+    with pytest.raises(TypeError, match="enabled must be a bool"):
+        sdk.ssl_verify(0)

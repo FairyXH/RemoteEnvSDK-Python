@@ -211,6 +211,7 @@ RemoteEnvSDK(
     transport_factory=None,
     connect_timeout=10.0,
     heartbeat_interval=15.0,
+    ssl_verify=True,
 )
 ```
 
@@ -1607,8 +1608,17 @@ RemoteEnvSDK(
     transport_factory=None,
     connect_timeout: float = 10.0,
     heartbeat_interval: float = 15.0,
+    ssl_verify: bool = True,
 )
 ```
+
+#### `ssl_verify`
+
+```python
+ssl_verify(enabled: bool) -> RemoteEnvSDK
+```
+
+设置后续新建 WebSocket 连接是否验证 TLS 证书和主机名。默认启用；`False` 仅建议用于受控测试环境。
 
 #### `set_collector_token`
 

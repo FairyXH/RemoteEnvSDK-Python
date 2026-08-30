@@ -38,6 +38,16 @@ sdk.upload(
 
 The SDK creates `timestamp`, `device_id`, and a durable per-type `sequence`. `custom` fields are preserved; a custom key that conflicts with a standard field raises `RemoteEnvValidationError`. `None` fields are omitted.
 
+TLS verification is enabled by default. For a controlled test endpoint with an invalid certificate, configure a new connection explicitly:
+
+```python
+sdk = RemoteEnvSDK("wss://example.invalid/envser/ws")
+sdk.ssl_verify(False)
+sdk.connect_collector()
+```
+
+Use `ssl_verify(True)` in production unless you have a specific, documented test requirement to disable certificate and hostname verification.
+
 ## Consumer
 
 ```python

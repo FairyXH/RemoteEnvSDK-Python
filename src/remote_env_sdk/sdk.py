@@ -176,11 +176,13 @@ class _Client:
 
 
 class RemoteEnvSDK:
-    def __init__(self, server_url: str, *, sequence_path: str | None = None, transport_factory: Callable[[str], WebSocketTransport] | None = None, connect_timeout: float = 10.0, heartbeat_interval: float = 15.0):
+    def __init__(self, server_url: str, *, sequence_path: str | None = None, transport_factory: Callable[[str], WebSocketTransport] | None = None, connect_timeout: float = 10.0, heartbeat_interval: float = 15.0, ssl_verify: bool = True):
         self.server_url = server_url
         self.connect_timeout = connect_timeout
         self.heartbeat_interval = heartbeat_interval
-        self._transport_factory = transport_factory or (lambda url: WebSocketTransport(url))
+        self.ssl_verify_enabled = ssl_verify
+        self._uses_default_transport = transport_factory is None
+        self._transport_factory = transport_factory or (lambda url: WebSocketTransport(url, ssl_verify=ssl_verify))
         self._sequence = SequenceStore(sequence_path)
         self._collector_token: str | None = None; self._collector_device_id: str | None = None
         self._client_token: str | None = None; self._collector: _Client | None = None; self._consumer: _Client | None = None
@@ -188,6 +190,15 @@ class RemoteEnvSDK:
 
     def set_collector_token(self, token: str, device_id: str) -> "RemoteEnvSDK":
         validate_identifier("device_id", device_id); self._collector_token, self._collector_device_id = token, device_id; return self
+
+    def ssl_verify(self, enabled: bool) -> "RemoteEnvSDK":
+        """设置新建 WebSocket 连接是否验证 TLS 证书和主机名。"""
+        if not isinstance(enabled, bool):
+            raise TypeError("enabled must be a bool")
+        self.ssl_verify_enabled = enabled
+        if self._uses_default_transport:
+            self._transport_factory = lambda url: WebSocketTransport(url, ssl_verify=enabled)
+        return self
 
     def connect_collector(self) -> None:
         if not self._collector_token or not self._collector_device_id: raise RemoteEnvAuthenticationError("collector token and device_id are required")
