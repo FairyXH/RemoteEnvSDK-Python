@@ -216,7 +216,8 @@ class RemoteEnvSDK:
 
     def connect_client(self) -> None:
         if not self._client_token: raise RemoteEnvAuthenticationError("client token is required")
-        self._consumer = _Client(self, "consumer")
+        if self._consumer is None:
+            self._consumer = _Client(self, "consumer")
         self._consumer.connect(self._client_token, None, None)
 
     def disconnect_client(self) -> None:

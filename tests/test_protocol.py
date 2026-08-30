@@ -29,8 +29,8 @@ class FakeTransport:
         self.sent.append(message)
         if message["type"] == "environment_data":
             self.on_message({"type": "data_result", "success": True, "device_id": message["device_id"], "data_type": message["data_type"], "sequence": message["sequence"]})
-        elif message["type"] == "heartbeat":
-            self.on_message({"type": "pong"})
+        elif message["type"] == "subscribe" or message["type"] == "unsubscribe":
+            self.on_message({"type": "subscription_result", "success": True, "device_id": message["device_id"], "data_types": message["data_types"]})
 
     def close(self):
         self.connected = False
@@ -62,5 +62,14 @@ def test_sequence_is_durable(tmp_path):
 def test_timeout_zero_without_cache(tmp_path):
     sdk = RemoteEnvSDK("ws://test", sequence_path=tmp_path / "seq.json", transport_factory=FakeTransport)
     sdk.set_client_token("token").connect_client()
-    with pytest.raises(RemoteEnvTimeoutError):
-        sdk.get_data("device-1", "wifi", timeout=0)
+def test_consumer_cache_callback_and_fresh(tmp_path):
+    sdk = RemoteEnvSDK("ws://test", sequence_path=tmp_path / "seq.json", transport_factory=FakeTransport)
+    received = []
+    sdk.on_data(received.append)
+    sdk.set_client_token("token").connect_client()
+    assert sdk.subscribe("device-1", "wifi")["success"] is True
+    transport = FakeTransport.instances[-1]
+    transport.on_message({"type": "environment_data", "device_id": "device-1", "data_type": "wifi", "sequence": 1, "timestamp": 1, "data": {"networks": [{"ssid": "cached"}]}, "cached": True})
+    data = sdk.get_data("device-1", "wifi", timeout=0)
+    assert data.items[0]["ssid"] == "cached"
+    assert len(received) == 1
